@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 )
@@ -32,11 +33,49 @@ func main() {
 func handleConnection(conn net.Conn) {
 	defer conn.Close()
 
-	// TODO: Implement SOCKS5 protocol
-	// 1. Read client greeting and negotiate authentication method
-	// 2. Perform authentication if required (when PROXY_USER env var is set)
-	// 3. Read CONNECT request
-	// 4. Connect to target server
-	// 5. Send success/error reply
-	// 6. Relay data between client and target
+	// Step 1: read SOCKS5 greeting header
+	header := make([]byte, 2)
+	if _, err := io.ReadFull(conn, header); err != nil {
+		log.Printf("failed to read greeting header: %v", err)
+		return
+	}
+
+	version := header[0]
+	nMethods := int(header[1])
+
+	if version != 0x05 {
+		log.Printf("unsupported SOCKS version: %d", version)
+		return
+	}
+
+	// Step 2: read authentication methods
+	methods := make([]byte, nMethods)
+	if _, err := io.ReadFull(conn, methods); err != nil {
+		log.Printf("failed to read auth methods: %v", err)
+		return
+	}
+
+	// Step 3: check if client supports no-auth method 0x00
+	supportsNoAuth := false
+	for _, method := range methods {
+		if method == 0x00 {
+			supportsNoAuth = true
+			break
+		}
+	}
+
+	if !supportsNoAuth {
+		// 0xFF means no acceptable authentication methods
+		conn.Write([]byte{0x05, 0xFF})
+		log.Printf("client does not support no-auth")
+		return
+	}
+
+	// Step 4: tell client we selected no-auth
+	if _, err := conn.Write([]byte{0x05, 0x00}); err != nil {
+		log.Printf("failed to write auth response: %v", err)
+		return
+	}
+
+	log.Printf("SOCKS5 greeting completed successfully")
 }
